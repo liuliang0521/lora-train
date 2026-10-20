@@ -1,0 +1,10 @@
+vendor/
+.venv*/
+datasets/
+models/
+runs/
+exports/
+runtime/
+__pycache__/
+*.pyc
+*.part

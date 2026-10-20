@@ -1,0 +1,29 @@
+{
+  "sdxl": {
+    "resolution": 768,
+    "batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "optimizer": "AdamW",
+    "mixed_precision": "bf16",
+    "checkpoint": "models/sdxl/sd_xl_base_1.0.safetensors",
+    "save_every_n_steps": 200,
+    "seed": 42
+  },
+  "qwen": {
+    "resolution": 512,
+    "batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "optimizer": "adamw",
+    "mixed_precision": "bf16",
+    "rank": 8,
+    "alpha": 8,
+    "learning_rate": 0.00005,
+    "steps": 1000,
+    "blocks_to_swap": 45,
+    "dit": "models/qwen/qwen_image_edit_2511_bf16.safetensors",
+    "vae": "models/qwen/qwen_image_vae.safetensors",
+    "text_encoder": "models/qwen/qwen_2.5_vl_7b.safetensors",
+    "save_every_n_steps": 100,
+    "seed": 42
+  }
+}

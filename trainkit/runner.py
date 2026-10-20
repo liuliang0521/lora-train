@@ -1,0 +1,118 @@
+"""Build and run pinned upstream training commands, without shell interpolation."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+from .data import ROOT, config, prepare, style_config
+
+
+def environment(backend, root=ROOT):
+    directory = Path(root) / (".venv-" + backend)
+    return directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def commands(style, backend, run, root=ROOT, smoke=False, resume=None):
+    root, run = Path(root).resolve(), Path(run).resolve()
+    source = config("backends", root)[backend]
+    profile = config("profiles", root)[backend]
+    selected = style_config(style, root)
+    python = str(environment(backend, root))
+    vendor = root / source["directory"]
+    output = run / ("smoke" if smoke else "output")
+    steps = 2 if smoke else profile.get("steps", selected["steps"])
+    launch = [python, "-m", "accelerate.commands.launch", "--num_processes", "1", "--num_machines", "1",
+              "--num_cpu_threads_per_process", "2", "--mixed_precision", "bf16", "--dynamo_backend", "no"]
+    common = ["--dataset_config", str(run / "dataset.toml"), "--mixed_precision", "bf16",
+              "--network_dim", str(profile.get("rank", selected["rank"])),
+              "--network_alpha", str(profile.get("alpha", selected["alpha"])),
+              "--optimizer_type", profile["optimizer"],
+              "--learning_rate", str(profile.get("learning_rate", selected["learning_rate"])),
+              "--max_train_steps", str(steps), "--gradient_accumulation_steps", str(profile["gradient_accumulation_steps"]),
+              "--gradient_checkpointing", "--sdpa", "--max_data_loader_n_workers", "0",
+              "--seed", str(profile["seed"]), "--save_every_n_steps", str(profile["save_every_n_steps"]),
+              "--save_state", "--output_dir", str(output),
+              "--output_name", selected["id"] + "-" + backend, "--save_precision", "bf16"]
+    if resume:
+        common.extend(["--resume", str(Path(resume).resolve())])
+    if backend == "sdxl":
+        return [(vendor, launch + [str(vendor / "sdxl_train_network.py"),
+                 "--pretrained_model_name_or_path", str(root / profile["checkpoint"]),
+                 "--network_module", "networks.lora", "--network_train_unet_only",
+                 "--cache_latents", "--cache_latents_to_disk", "--cache_text_encoder_outputs",
+                 "--cache_text_encoder_outputs_to_disk", "--no_half_vae", "--save_model_as", "safetensors",
+                 "--lr_scheduler", "constant_with_warmup", "--lr_warmup_steps", str(0 if smoke else 100),
+                 "--logging_dir", str(run / "logs"), "--log_with", "tensorboard"] + common)]
+    scripts = vendor / "src/musubi_tuner"
+    models = {key: str(root / profile[key]) for key in ("dit", "vae", "text_encoder")}
+    return [
+        (vendor, [python, str(scripts / "qwen_image_cache_latents.py"),
+                  "--dataset_config", str(run / "dataset.toml"), "--vae", models["vae"],
+                  "--model_version", "edit-2511"]),
+        (vendor, [python, str(scripts / "qwen_image_cache_text_encoder_outputs.py"),
+                  "--dataset_config", str(run / "dataset.toml"), "--text_encoder", models["text_encoder"],
+                  "--model_version", "edit-2511", "--batch_size", "1", "--fp8_vl"]),
+        (vendor, launch + [str(scripts / "qwen_image_train_network.py"),
+                  "--dit", models["dit"], "--vae", models["vae"], "--text_encoder", models["text_encoder"],
+                  "--model_version", "edit-2511", "--network_module", "networks.lora_qwen_image",
+                  "--fp8_base", "--fp8_scaled", "--blocks_to_swap", str(profile["blocks_to_swap"]),
+                  "--timestep_sampling", "shift", "--discrete_flow_shift", "2.2",
+                  "--weighting_scheme", "none"] + common)
+    ]
+
+
+def run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False):
+    root = Path(root)
+    run = prepare(style, backend, root, allow_small)
+    steps = commands(style, backend, run, root, smoke, resume)
+    plan = [{"cwd": str(cwd), "args": args} for cwd, args in steps]
+    (run / "commands.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    print(json.dumps({"run": str(run), "commands": plan}, indent=2))
+    if dry_run:
+        return run
+    output = run / ("smoke" if smoke else "output")
+    if resume:
+        state = Path(resume).resolve()
+        if smoke or output.resolve() not in state.parents or not state.is_dir():
+            raise ValueError("Resume requires a saved state directory from this exact run's output/")
+    elif output.exists() and any(output.glob("*.safetensors")):
+        raise ValueError("Run already contains checkpoints; use --resume or archive that output before a fresh run")
+    python = environment(backend, root)
+    if not python.is_file():
+        raise ValueError("Run scripts/setup.ps1 first: missing " + str(python))
+    profile = config("profiles", root)[backend]
+    for key in (("checkpoint",) if backend == "sdxl" else ("dit", "vae", "text_encoder")):
+        if not (root / profile[key]).is_file():
+            raise ValueError("Missing model: " + profile[key])
+    vendor = steps[0][0]
+    expected = config("backends", root)[backend]["revision"]
+    revision = subprocess.check_output(["git", "-c", "safe.directory=" + vendor.as_posix(),
+                                        "-C", str(vendor), "rev-parse", "HEAD"], text=True).strip()
+    if revision != expected:
+        raise ValueError("Upstream trainer revision differs from config/backends.json")
+    report = subprocess.check_output([str(python), "-c",
+        "import json,torch; print(json.dumps({'torch':torch.__version__,'cuda':torch.cuda.is_available(),"
+        "'bf16':torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False}))"], text=True)
+    (run / "environment.json").write_text(report, encoding="utf-8")
+    if not json.loads(report)["bf16"]:
+        raise ValueError("CUDA with BF16 support is required")
+    (run / "environment-freeze.txt").write_text(
+        subprocess.check_output([str(python), "-m", "pip", "freeze"], text=True), encoding="utf-8")
+    env = dict(os.environ, TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_TELEMETRY="1")
+    log_file = run / ("smoke.log" if smoke else "train.log")
+    with log_file.open("a", encoding="utf-8") as log:
+        for cwd, args in steps:
+            log.write("\n" + time.strftime("%Y-%m-%d %H:%M:%S") + " " + subprocess.list2cmdline(args) + "\n")
+            log.flush()
+            with subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  text=True, encoding="utf-8", errors="replace") as process:
+                for line in process.stdout:
+                    print(line, end="")
+                    log.write(line)
+                    log.flush()
+                if process.wait():
+                    raise RuntimeError("Training/cache process failed; see " + str(log_file))
+    return run

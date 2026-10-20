@@ -1,0 +1,88 @@
+{
+  "categories": {
+    "people": 20,
+    "animals": 15,
+    "scenes": 15,
+    "fantasy": 10
+  },
+  "styles": [
+    {
+      "id": "cartoon",
+      "name": "动漫Q版",
+      "trigger": "iliang_chibi",
+      "description": "clean 2D cartoon, chibi proportions, dark outlines, simplified flat colors",
+      "rank": 16,
+      "alpha": 16,
+      "steps": 1200,
+      "learning_rate": 0.0001,
+      "lora_strength": 0.85,
+      "denoise": 0.62,
+      "control_strength": 0.25
+    },
+    {
+      "id": "doubao-3d",
+      "name": "豆包3D",
+      "trigger": "iliang_soft3d",
+      "description": "rounded soft matte 3D cartoon, expressive eyes, gentle lighting",
+      "rank": 16,
+      "alpha": 16,
+      "steps": 1400,
+      "learning_rate": 0.0001,
+      "lora_strength": 0.85,
+      "denoise": 0.58,
+      "control_strength": 0.3
+    },
+    {
+      "id": "miyazaki",
+      "name": "手绘动画",
+      "trigger": "iliang_handpaint",
+      "description": "hand-drawn cel animation, delicate outlines, painted natural backgrounds",
+      "rank": 16,
+      "alpha": 16,
+      "steps": 1200,
+      "learning_rate": 0.0001,
+      "lora_strength": 0.8,
+      "denoise": 0.5,
+      "control_strength": 0.45
+    },
+    {
+      "id": "jojo",
+      "name": "JOJO",
+      "trigger": "iliang_dramaticink",
+      "description": "dramatic angular ink contours, sculptural cel shading, strong tonal planes",
+      "rank": 32,
+      "alpha": 16,
+      "steps": 1400,
+      "learning_rate": 0.00008,
+      "lora_strength": 0.8,
+      "denoise": 0.55,
+      "control_strength": 0.4
+    },
+    {
+      "id": "van-gogh",
+      "name": "厚涂油画",
+      "trigger": "iliang_impasto",
+      "description": "expressive impasto oil painting, raised pigment ridges, rhythmic brushwork",
+      "rank": 16,
+      "alpha": 16,
+      "steps": 1200,
+      "learning_rate": 0.0001,
+      "lora_strength": 0.85,
+      "denoise": 0.52,
+      "control_strength": 0.35
+    },
+    {
+      "id": "sand-art",
+      "name": "单色沙画",
+      "trigger": "iliang_sandlight",
+      "description": "sand-yellow monochrome lightbox art, granular texture, swept highlights",
+      "rank": 16,
+      "alpha": 16,
+      "steps": 1400,
+      "learning_rate": 0.00008,
+      "lora_strength": 0.9,
+      "denoise": 0.6,
+      "control_strength": 0.45
+    }
+  ]
+}

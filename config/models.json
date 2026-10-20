@@ -1,0 +1,40 @@
+{
+  "models": [
+    {
+      "id": "sdxl-base",
+      "backend": "sdxl",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "file": "sd_xl_base_1.0.safetensors",
+      "path": "models/sdxl/sd_xl_base_1.0.safetensors"
+    },
+    {
+      "id": "sdxl-canny",
+      "backend": "sdxl",
+      "repo": "diffusers/controlnet-canny-sdxl-1.0",
+      "file": "diffusion_pytorch_model.fp16.safetensors",
+      "path": "models/controlnet/controlnet-canny-sdxl-1.0-fp16.safetensors",
+      "inference_only": true
+    },
+    {
+      "id": "qwen-dit",
+      "backend": "qwen",
+      "repo": "Comfy-Org/Qwen-Image-Edit_ComfyUI",
+      "file": "split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors",
+      "path": "models/qwen/qwen_image_edit_2511_bf16.safetensors"
+    },
+    {
+      "id": "qwen-vae",
+      "backend": "qwen",
+      "repo": "Comfy-Org/Qwen-Image_ComfyUI",
+      "file": "split_files/vae/qwen_image_vae.safetensors",
+      "path": "models/qwen/qwen_image_vae.safetensors"
+    },
+    {
+      "id": "qwen-text",
+      "backend": "qwen",
+      "repo": "Comfy-Org/Qwen-Image_ComfyUI",
+      "file": "split_files/text_encoders/qwen_2.5_vl_7b.safetensors",
+      "path": "models/qwen/qwen_2.5_vl_7b.safetensors"
+    }
+  ]
+}
