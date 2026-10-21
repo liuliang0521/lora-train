@@ -9,6 +9,7 @@ import time
 
 from .data import ROOT, config, prepare, style_config
 from .locking import training_lock
+from .continuation import archive_formal_run, choose_continuation
 
 
 def environment(backend, root=ROOT):
@@ -78,19 +79,35 @@ def commands(style, backend, run, root=ROOT, smoke=False, resume=None, pilot=Fal
     ]
 
 
-def run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False, pilot=False, cache_only=False):
+def run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False, pilot=False, cache_only=False, restart=False):
+    if restart and (smoke or pilot or cache_only or resume or dry_run):
+        raise ValueError("Restart requires formal training without resume/dry-run")
     if dry_run:
-        return _run_training(style, backend, root, smoke, resume, dry_run, allow_small, pilot, cache_only)
+        return _run_training(style, backend, root, smoke, resume, dry_run, allow_small, pilot, cache_only, restart)
     with training_lock(root):
-        return _run_training(style, backend, root, smoke, resume, dry_run, allow_small, pilot, cache_only)
+        return _run_training(style, backend, root, smoke, resume, dry_run, allow_small, pilot, cache_only, restart)
 
 
-def _run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False, pilot=False, cache_only=False):
+def _run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False, pilot=False, cache_only=False, restart=False):
     root = Path(root)
     run = prepare(style, backend, root, allow_small)
+    mode = "cache" if cache_only else "smoke" if smoke else "pilot" if pilot else "train"
+    resume_step = 0
+    if restart:
+        archive_formal_run(run, root, backend, style)
+    if mode == "train" and backend == "qwen":
+        profile = config("profiles", root)[backend]
+        selected = style_config(style, root)
+        complete, state, resume_step = choose_continuation(
+            run, selected["id"] + "-" + backend, profile.get("steps", selected["steps"]), resume)
+        if complete:
+            print(f"[{style}] Already complete ({resume_step} steps); skipping formal training.")
+            return run
+        resume = str(state) if state else None
+        print(f"[{style}] Resuming from step {resume_step}: {resume}" if resume else
+              f"[{style}] Starting formal training from step 0 (no saved state).")
     steps = commands(style, backend, run, root, smoke, resume, pilot, cache_only)
     plan = [{"cwd": str(cwd), "args": args} for cwd, args in steps]
-    mode = "cache" if cache_only else "smoke" if smoke else "pilot" if pilot else "train"
     (run / (mode + "-commands.json")).write_text(json.dumps(plan, indent=2), encoding="utf-8")
     if mode == "train":
         (run / "commands.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
@@ -118,6 +135,9 @@ def _run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=F
     if revision != expected:
         raise ValueError("Upstream trainer revision differs from config/backends.json")
     if backend == "qwen":
+        from .backend_patches import ensure_qwen_fp8_support, ensure_qwen_resume_support
+        ensure_qwen_fp8_support(vendor)
+        ensure_qwen_resume_support(vendor)
         checked = subprocess.run([str(python), str(root / "scripts/check_qwen_backend.py"),
                                   "--run", str(run), "--mode", mode], stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
@@ -137,7 +157,8 @@ def _run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=F
     (run / "environment-freeze.txt").write_text(
         subprocess.check_output([str(python), "-m", "pip", "freeze"], text=True), encoding="utf-8")
     env = dict(os.environ, TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_TELEMETRY="1",
-               PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1")
+               PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1",
+               TRAINKIT_RESUME_STEP=str(resume_step))
     log_file = run / (mode + ".log")
     from .resources import ResourceMonitor
     with ResourceMonitor(run, mode) as resources, log_file.open("a", encoding="utf-8") as log:

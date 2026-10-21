@@ -44,9 +44,11 @@ powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon 
 
 GPU 执行前会调用固定 Musubi 的真实参数解析器和数据 schema 校验。缓存统一 `--skip_existing`；不同数据、描述、配置、源码 revision 生成不同运行指纹，避免旧缓存混入。缓存阶段用一个读取线程；训练 dataloader 用0个子进程。
 
+启动时自动检查并应用当前固定 Musubi 的小范围兼容补丁：Transformers 5 的 Qwen RMSNorm/解码层 FP8 接口，以及续训步数和进度恢复。补丁逻辑保存在 `trainkit/backend_patches.py`，因此重新克隆项目或安装vendor后仍可恢复；不将整个上游源码入库，不改变固定commit，源码结构不匹配时停止并提示。
+
 smoke、pilot 分别写入 `smoke/`、`pilot/`，禁止导出部署，不与正式 `output/` 混用。双击 `scripts/start-training.cmd` 默认仅执行 Qwen Q版两步 smoke。不要同时训练多个风格。
 
-仅正式训练支持Resume；smoke/pilot目录已有权重时，先归档该试跑目录再重新试跑，不覆盖旧检查点。
+仅正式训练自动续训；smoke/pilot目录已有权重时，先归档该试跑目录再重新试跑，不覆盖旧检查点。正式训练自动读取配套checkpoint的`ss_steps`，恢复完整权重、优化器、调度器和随机状态；总目标仍是1000步，不会从恢复点额外再跑1000步。恢复时跳过对应epoch中的已训练批次，但不承诺数据shuffle与随机序列逐位复现不中断训练。
 
 ## 内存配置与首轮参数
 
@@ -70,11 +72,18 @@ smoke、pilot 分别写入 `smoke/`、`pilot/`，禁止导出部署，不与正�
 powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon -Mode train
 # 单风格效果验收后再顺序训练其他风格
 powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style all -Mode train
+# 中断后再次执行上一条命令：已完成风格跳过，其余自动续训
+# 清空当前正式结果并从头训练（旧结果移至各运行archive/，不删除）
+powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style all -Mode train -Restart
 # 恢复同一指纹下正式训练保存的state目录，不是safetensors文件
 powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon -Mode train -Resume "runs/qwen/cartoon/<指纹>/output/<实际state目录>"
 ```
 
 正式训练起点1000 optimizer steps，每100步保存；先比较早、中、后不同检查点，不以最后一版或最低loss自动决定质量。七张留出图不进训练；另加未见图片检查身份、主体数量/姿态、原背景、风格、油画配色和沙黄单色。
+
+按Ctrl+C停止后，等待原进程退出，再执行不带`-Restart`的相同命令。自动恢复会排除缺少文件或被截断的state，回退到较早的完整状态；例如在350步中断，通常从300步恢复，未保存的50步重新计算。首次保存前中断会从零开始。若已有正式结果但找不到可恢复状态，脚本报错，需显式`-Restart`才能重来。
+
+`-Restart`可用于`-Style all`或单风格，仅移动当前数据/配置指纹下的正式`output/`、TensorBoard `logs/`、`train.log`、`train-resources.*`与正式命令记录至同目录`archive/<时间-标识>/`。数据、缓存、模型、smoke/pilot、旧指纹及导出包保留；它不用于释放磁盘空间。该参数不能与`-Resume`或非train模式组合。数据、caption、profile改变时会产生新指纹，不能自动恢复旧运行。已完成的判断以完整最终权重的`ss_steps`达到目标为准，不依赖日志最后一行。
 
 ```powershell
 .\.venv-qwen\Scripts\python.exe train.py export --backend qwen --style cartoon --checkpoint "runs/qwen/cartoon/<指纹>/output/<所选检查点>.safetensors" --manifest "runs/qwen/cartoon/<指纹>/dataset-manifest.json"

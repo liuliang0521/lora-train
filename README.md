@@ -26,7 +26,19 @@ powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon 
 powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon -Mode train
 ~~~
 
-默认backend=qwen。`-Mode preview` 只准备数据和命令，`cache`只缓存，`pilot`独立运行100步且不能导出；`-Style all -Mode train` 顺序训练六种风格，中途失败即停。`-Resume <同一运行的state目录>` 用于正式训练断点续训。进程锁阻止同时抢占显卡。双击 `scripts/start-training.cmd` 默认只试训Qwen Q版。
+默认backend=qwen。`-Mode preview` 只准备数据和命令，`cache`只缓存，`pilot`独立运行100步且不能导出；`-Style all -Mode train` 顺序训练六种风格，中途失败即停。Qwen正式训练默认自动续训：已完成的风格跳过，未完成的风格从当前数据/配置指纹下步数最高的完整state恢复，新风格从零开始。进程锁阻止同时抢占显卡。双击 `scripts/start-training.cmd` 默认只试训Qwen Q版。
+
+中断后重新执行相同命令即可；需要主动停止时按Ctrl+C，等待进程退出再启动：
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style all -Mode train
+# 明确从头训练六种风格（旧正式结果移到各运行的archive/，可以找回）
+powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style all -Mode train -Restart
+# 只重训一个风格
+powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon -Mode train -Restart
+~~~
+
+`-Restart` 只归档所选风格当前指纹下的正式 `output/`、`logs/`、正式日志和命令记录；保留数据、模型、缓存、smoke/pilot、其他指纹和导出包。首次重训中断后续跑时不要再加 `-Restart`。默认每100步保存，未保存的进度需重算；100步之前没有状态时从零开始。只有权重而没有完整state时会停止并提示，不静默覆盖。修改数据或profile会产生新指纹，不跨运行自动恢复。`-Resume <同一运行的state目录>` 仍可手动选择Qwen正式断点（必须有配套checkpoint及步数metadata）；SDXL保留原有手动恢复方式。
 
 每种风格60张目标图及同名.txt描述放入 datasets/<style>/ 四类目录，sources/<category>/保存同名真实原图。现有生成数据可用import-generated一次导入：
 

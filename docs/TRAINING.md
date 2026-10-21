@@ -43,7 +43,7 @@ dry-run会校验数据、准备训练副本、输出真实命令；不启动GPU�
 
 缓存开启时不shuffle caption、不用随机裁切/颜色增强；图像、描述或分辨率变化产生新缓存指纹。显存不足先将resolution降640、JOJO rank降16，保留batch1/梯度检查点。基础smoke通过后再试1024并重建缓存。
 
-恢复必须指定同一运行保存的state目录，不是.safetensors：
+Qwen正式训练默认自动恢复当前指纹下完整的state并跳过已完成风格，重复执行原命令即可。`scripts/train-style.ps1 -Style all -Mode train -Restart` 会归档当前正式结果后从零训练，保留缓存、数据和试跑结果。详见QWEN_DESKTOP。SDXL保留手动恢复方式；恢复必须指定同一运行保存的state目录，不是.safetensors：
 
 ~~~powershell
 & $python train.py train --backend sdxl --style cartoon --resume "runs\sdxl\cartoon\<指纹>\output\<实际state目录>"

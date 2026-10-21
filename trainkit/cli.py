@@ -91,6 +91,7 @@ def main():
     trial.add_argument("--pilot", action="store_true", help="100-step resource/speed pilot; not exportable")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--resume", help="Upstream saved state directory")
+    parser.add_argument("--restart", action="store_true", help="Archive formal training results and start over; keep data/cache/trial runs")
     parser.add_argument("--checkpoint", help="Explicit selected .safetensors file under a run's output/")
     parser.add_argument("--manifest", help="Matching run's dataset-manifest.json")
     parser.add_argument("--model", help="One id from config/models.json")
@@ -98,6 +99,8 @@ def main():
     args = parser.parse_args()
     if (args.smoke or args.pilot or args.resume) and args.command != "train":
         parser.error("--smoke/--pilot/--resume require train")
+    if args.restart and (args.command != "train" or args.smoke or args.pilot or args.resume or args.dry_run):
+        parser.error("--restart requires formal train and cannot be combined with --resume/--dry-run/--smoke/--pilot")
     try:
         if args.command == "init":
             initialize()
@@ -122,7 +125,7 @@ def main():
             elif args.command in ("train", "cache"):
                 run_training(args.style, args.backend, smoke=args.smoke, resume=args.resume,
                              dry_run=args.dry_run, allow_small=args.allow_small,
-                             pilot=args.pilot, cache_only=args.command == "cache")
+                             pilot=args.pilot, cache_only=args.command == "cache", restart=args.restart)
             else:
                 if not args.checkpoint or not args.manifest:
                     parser.error("export requires --checkpoint and --manifest")
