@@ -61,6 +61,12 @@ class ExportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Qwen transformer"):
             inspect_lora(self.checkpoint, "qwen")
 
+    def test_sdxl_attention_transformer_layers_are_valid(self):
+        prefix = "lora_unet_down_blocks_1_attentions_0_transformer_blocks_0_attn1_to_q"
+        save_file({prefix + ".lora_down.weight": torch.ones(2, 4),
+                   prefix + ".lora_up.weight": torch.ones(4, 2)}, str(self.checkpoint))
+        self.assertEqual(inspect_lora(self.checkpoint, "sdxl")["lora_layers"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 
 Read README.md, docs/TRAINING.md, docs/DATASET.md and docs/VALIDATION.md first.
 
-- Default route is SDXL style LoRA on RTX4060Ti16GB. Qwen Edit2511 is an optional paired-data experiment.
+- User-selected first route is Musubi Tuner / Qwen Edit2511 paired LoRA on RTX4060Ti16GB + 64GB RAM, with explicit memory-saving settings and GPU pilot validation. Keep SDXL as an alternative.
 - Use dedicated .venv-sdxl / .venv-qwen environments. Never install training packages into ComfyUI or Jetson Python.
 - Keep official trainer revisions pinned. Do not vendor their weights or copy trainer implementation into this repo.
 - No models, user images, caches, run outputs or virtual environments in Git.

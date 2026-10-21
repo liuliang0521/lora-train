@@ -8,6 +8,7 @@ import sys
 import time
 
 from .data import ROOT, config, prepare, style_config
+from .locking import training_lock
 
 
 def environment(backend, root=ROOT):
@@ -15,15 +16,17 @@ def environment(backend, root=ROOT):
     return directory / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
-def commands(style, backend, run, root=ROOT, smoke=False, resume=None):
+def commands(style, backend, run, root=ROOT, smoke=False, resume=None, pilot=False, cache_only=False):
     root, run = Path(root).resolve(), Path(run).resolve()
     source = config("backends", root)[backend]
     profile = config("profiles", root)[backend]
     selected = style_config(style, root)
     python = str(environment(backend, root))
     vendor = root / source["directory"]
-    output = run / ("smoke" if smoke else "output")
-    steps = 2 if smoke else profile.get("steps", selected["steps"])
+    output = run / ("smoke" if smoke else "pilot" if pilot else "output")
+    steps = 2 if smoke else profile.get("pilot_steps", 100) if pilot else profile.get("steps", selected["steps"])
+    if sum((smoke, pilot, cache_only)) > 1 or (cache_only and backend != "qwen"):
+        raise ValueError("Use one run mode; separate caching is supported for Qwen only")
     launch = [python, "-m", "accelerate.commands.launch", "--num_processes", "1", "--num_machines", "1",
               "--num_cpu_threads_per_process", "2", "--mixed_precision", "bf16", "--dynamo_backend", "no"]
     common = ["--dataset_config", str(run / "dataset.toml"), "--mixed_precision", "bf16",
@@ -48,37 +51,58 @@ def commands(style, backend, run, root=ROOT, smoke=False, resume=None):
                  "--logging_dir", str(run / "logs"), "--log_with", "tensorboard"] + common)]
     scripts = vendor / "src/musubi_tuner"
     models = {key: str(root / profile[key]) for key in ("dit", "vae", "text_encoder")}
-    return [
+    memory_options = []
+    if profile.get("block_swap_h2d_only"):
+        memory_options += ["--block_swap_h2d_only", "--block_swap_ring_size", str(profile.get("block_swap_ring_size", 1))]
+    if profile.get("gradient_checkpointing_cpu_offload"):
+        memory_options += ["--gradient_checkpointing_cpu_offload"]
+    cache = [
         (vendor, [python, str(scripts / "qwen_image_cache_latents.py"),
                   "--dataset_config", str(run / "dataset.toml"), "--vae", models["vae"],
-                  "--model_version", "edit-2511"]),
+                  "--model_version", "edit-2511", "--batch_size", "1", "--num_workers", "1", "--skip_existing"]),
         (vendor, [python, str(scripts / "qwen_image_cache_text_encoder_outputs.py"),
                   "--dataset_config", str(run / "dataset.toml"), "--text_encoder", models["text_encoder"],
-                  "--model_version", "edit-2511", "--batch_size", "1", "--fp8_vl"]),
+                  "--model_version", "edit-2511", "--batch_size", "1", "--num_workers", "1", "--fp8_vl", "--skip_existing"])]
+    if cache_only:
+        return cache
+    return cache + [
         (vendor, launch + [str(scripts / "qwen_image_train_network.py"),
                   "--dit", models["dit"], "--vae", models["vae"], "--text_encoder", models["text_encoder"],
                   "--model_version", "edit-2511", "--network_module", "networks.lora_qwen_image",
                   "--fp8_base", "--fp8_scaled", "--blocks_to_swap", str(profile["blocks_to_swap"]),
                   "--timestep_sampling", "shift", "--discrete_flow_shift", "2.2",
-                  "--weighting_scheme", "none"] + common)
+                  "--weighting_scheme", "none", "--lr_scheduler", "constant_with_warmup",
+                  "--lr_warmup_steps", str(0 if smoke or pilot else 100),
+                  "--logging_dir", str(run / ("pilot-logs" if pilot else "smoke-logs" if smoke else "logs")),
+                  "--log_with", "tensorboard"] + memory_options + common)
     ]
 
 
-def run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False):
+def run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False, pilot=False, cache_only=False):
+    if dry_run:
+        return _run_training(style, backend, root, smoke, resume, dry_run, allow_small, pilot, cache_only)
+    with training_lock(root):
+        return _run_training(style, backend, root, smoke, resume, dry_run, allow_small, pilot, cache_only)
+
+
+def _run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=False, allow_small=False, pilot=False, cache_only=False):
     root = Path(root)
     run = prepare(style, backend, root, allow_small)
-    steps = commands(style, backend, run, root, smoke, resume)
+    steps = commands(style, backend, run, root, smoke, resume, pilot, cache_only)
     plan = [{"cwd": str(cwd), "args": args} for cwd, args in steps]
-    (run / "commands.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    mode = "cache" if cache_only else "smoke" if smoke else "pilot" if pilot else "train"
+    (run / (mode + "-commands.json")).write_text(json.dumps(plan, indent=2), encoding="utf-8")
+    if mode == "train":
+        (run / "commands.json").write_text(json.dumps(plan, indent=2), encoding="utf-8")
     print(json.dumps({"run": str(run), "commands": plan}, indent=2))
     if dry_run:
         return run
-    output = run / ("smoke" if smoke else "output")
+    output = run / ("smoke" if smoke else "pilot" if pilot else "output")
     if resume:
         state = Path(resume).resolve()
-        if smoke or output.resolve() not in state.parents or not state.is_dir():
+        if smoke or pilot or cache_only or output.resolve() not in state.parents or not state.is_dir():
             raise ValueError("Resume requires a saved state directory from this exact run's output/")
-    elif output.exists() and any(output.glob("*.safetensors")):
+    elif not cache_only and output.exists() and any(output.glob("*.safetensors")):
         raise ValueError("Run already contains checkpoints; use --resume or archive that output before a fresh run")
     python = environment(backend, root)
     if not python.is_file():
@@ -93,18 +117,32 @@ def run_training(style, backend, root=ROOT, smoke=False, resume=None, dry_run=Fa
                                         "-C", str(vendor), "rev-parse", "HEAD"], text=True).strip()
     if revision != expected:
         raise ValueError("Upstream trainer revision differs from config/backends.json")
+    if backend == "qwen":
+        checked = subprocess.run([str(python), str(root / "scripts/check_qwen_backend.py"),
+                                  "--run", str(run), "--mode", mode], stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
+        (run / "backend-check.log").write_text(checked.stdout, encoding="utf-8")
+        print(checked.stdout)
+        checked.check_returncode()
     report = subprocess.check_output([str(python), "-c",
-        "import json,torch; print(json.dumps({'torch':torch.__version__,'cuda':torch.cuda.is_available(),"
-        "'bf16':torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False}))"], text=True)
+        "import json,platform,sys,torch; cuda=torch.cuda.is_available(); print(json.dumps({"
+        "'python':sys.version,'executable':sys.executable,'platform':platform.platform(),"
+        "'torch':torch.__version__,'cuda_build':torch.version.cuda,'cuda':cuda,"
+        "'gpu':torch.cuda.get_device_name(0) if cuda else None,"
+        "'vram_bytes':torch.cuda.get_device_properties(0).total_memory if cuda else None,"
+        "'bf16':torch.cuda.is_bf16_supported() if cuda else False}))"], text=True)
     (run / "environment.json").write_text(report, encoding="utf-8")
     if not json.loads(report)["bf16"]:
         raise ValueError("CUDA with BF16 support is required")
     (run / "environment-freeze.txt").write_text(
         subprocess.check_output([str(python), "-m", "pip", "freeze"], text=True), encoding="utf-8")
-    env = dict(os.environ, TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_TELEMETRY="1")
-    log_file = run / ("smoke.log" if smoke else "train.log")
-    with log_file.open("a", encoding="utf-8") as log:
-        for cwd, args in steps:
+    env = dict(os.environ, TOKENIZERS_PARALLELISM="false", HF_HUB_DISABLE_TELEMETRY="1",
+               PYTHONIOENCODING="utf-8", PYTHONUTF8="1", PYTHONUNBUFFERED="1")
+    log_file = run / (mode + ".log")
+    from .resources import ResourceMonitor
+    with ResourceMonitor(run, mode) as resources, log_file.open("a", encoding="utf-8") as log:
+        for index, (cwd, args) in enumerate(steps):
+            resources.phase = ("cache-latents", "cache-text", "training")[index] if backend == "qwen" else "training"
             log.write("\n" + time.strftime("%Y-%m-%d %H:%M:%S") + " " + subprocess.list2cmdline(args) + "\n")
             log.flush()
             with subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

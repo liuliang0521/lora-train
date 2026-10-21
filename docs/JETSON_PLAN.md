@@ -1,4 +1,43 @@
-# LoRA 风格转换训练与 Jetson 推理技术方案
+# 当前优先：Qwen Edit 2511 配对 LoRA 对接 Jetson
+
+训练见 [QWEN_DESKTOP.md](QWEN_DESKTOP.md)。导出整个 `exports/qwen/<style>/<hash>/` 包到Jetson，包含权重与manifest，不使用smoke/pilot产物。
+
+Jetson项目根目录执行（容器部署则在现有容器内，导出包先放入已挂载目录）：
+
+```bash
+python3 scripts/manage.py init
+python3 scripts/manage.py download-models --profile qwen
+python3 scripts/manage.py verify-models --profile qwen
+python3 scripts/manage.py install-lora --package /media/usb/cartoon-export/
+# 其余五个风格分别安装
+python3 scripts/manage.py lora-profile --backend qwen
+```
+
+共用原有BF16 Qwen2511、FP8 scaled视觉文本编码器、Qwen VAE，无需SDXL/ControlNet。安装器使用配置的inference.python，校验完整SHA、触发词、底模、Qwen层名、层对、rank与有限值，不替换NVIDIA Torch。固定安装路径：
+
+```text
+data/models/loras/styles/cartoon-qwen.safetensors
+data/models/loras/styles/doubao-3d-qwen.safetensors
+data/models/loras/styles/miyazaki-qwen.safetensors
+data/models/loras/styles/jojo-qwen.safetensors
+data/models/loras/styles/van-gogh-qwen.safetensors
+data/models/loras/styles/sand-art-qwen.safetensors
+```
+
+每份权重旁保留安装manifest。六套独立图在Jetson仓库 `workflows/lora-candidates/qwen/`，功能映射 `config/features.lora-qwen.json`。先在ComfyUI逐个测试，默认20步/CFG4/euler/simple、最长边1024，不加载Lightning或CFGNorm；四步组合需独立测试。主体与已有背景一起风格化，不虚构或替换场景。油画不套名画背景，沙画全图只沙黄深浅。
+
+保持单推理槽，切换与重复出图测共享内存/耗时，不缓存六份完整底模；512训练起点与1024推理质量需对照。新图会改变轮廓，不机械覆盖源alpha。全部验收后，停止新任务、等队列完成并停止服务：
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 scripts/manage.py lora-profile --backend qwen --activate
+python3 scripts/manage.py verify-models
+# 按现有Docker/systemd方式启动整个服务，运行doctor并测试业务
+```
+
+激活先完整校验，再备份features至runtime/profile-backups并切换；缺失/损坏时不切换。恢复备份并重启可回滚。审核、MySQL、原图12小时、结果主动删除、旧结果和签名密钥保留策略不变。尚未训练或Orin验收，不宣称上线。
+
+## 以下为旧SDXL备选方案记录
 
 ## 目标与取舍
 

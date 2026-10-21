@@ -81,7 +81,11 @@ def validate(style, backend="sdxl", root=ROOT, allow_small=False):
                         raise ValueError("Qwen Edit requires exactly one aligned source photo with the same stem")
                     source = candidates[0]
                     with Image.open(source) as image:
+                        if getattr(image, "n_frames", 1) != 1:
+                            raise ValueError("animated source images are unsupported")
                         rgb = ImageOps.exif_transpose(image).convert("RGB")
+                        if min(rgb.size) < 256:
+                            raise ValueError("source minimum side must be >=256")
                         source_digest = hashlib.sha256(str(rgb.size).encode() + rgb.tobytes()).hexdigest()
                         if abs(rgb.width / rgb.height - width / height) > 0.03:
                             raise ValueError("source/target aspect ratios differ; align composition first")
@@ -109,7 +113,7 @@ def split_records(records, seed=42):
     train, validation = [], []
     for category in sorted({item["category"] for item in records}):
         group = sorted((item for item in records if item["category"] == category),
-                       key=lambda r: hashlib.sha256((str(seed) + r["sha256"]).encode()).hexdigest())
+                       key=lambda r: hashlib.sha256((str(seed) + r["id"]).encode()).hexdigest())
         holdout = max(1, math.ceil(len(group) * 0.1)) if len(group) >= 2 else 0
         validation.extend(group[:holdout])
         train.extend(group[holdout:])
@@ -127,7 +131,7 @@ def prepare(style, backend="sdxl", root=ROOT, allow_small=False):
     train, validation = split_records(report["records"], profile["seed"])
     # Content and caption hash prevents reuse of stale latent/text caches.
     fingerprint = hashlib.sha256(json.dumps(
-        {"records": report["records"], "profile": profile, "style": style_config(style, root),
+        {"dataset_schema": 3, "records": report["records"], "profile": profile, "style": style_config(style, root),
          "trainer_revision": config("backends", root)[backend]["revision"], "backend": backend},
         sort_keys=True).encode()).hexdigest()[:16]
     run = root / "runs" / backend / style / fingerprint
@@ -143,7 +147,11 @@ def prepare(style, backend="sdxl", root=ROOT, allow_small=False):
             # Qwen caption is an editing instruction, SDXL caption describes target.
             caption = item["caption"]
             if backend == "qwen":
-                caption = "Restyle the input image as " + caption + ". Preserve identity, composition and existing scene."
+                caption = ("Restyle the entire input in " + style_config(style, root)["trigger"] + " style: "
+                           + style_config(style, root)["description"] + ". "
+                           "Preserve recognizable subjects, original scene, framing and spatial relationships. "
+                           "Restyle the existing background as well; do not remove, replace or invent scenery. "
+                           "Target content: " + caption)
             image.with_suffix(".txt").write_text(caption, encoding="utf-8")
             if backend == "qwen":
                 source_dir = run / (subset + "-sources")
@@ -152,7 +160,7 @@ def prepare(style, backend="sdxl", root=ROOT, allow_small=False):
                 if not source_file.exists():
                     with Image.open(item["source"]) as picture:
                         ImageOps.exif_transpose(picture).convert("RGB").save(source_file)
-    manifest = {"schema": 1, "fingerprint": fingerprint, "backend": backend, "style": style,
+    manifest = {"schema": 3, "split_strategy": "category-stable-id-seed", "fingerprint": fingerprint, "backend": backend, "style": style,
                 "trigger": style_config(style, root)["trigger"], "profile": profile,
                 "train": train, "validation": validation}
     (run / "dataset-manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -168,7 +176,7 @@ def prepare(style, backend="sdxl", root=ROOT, allow_small=False):
                                "batch_size": 1, "enable_bucket": True, "bucket_no_upscale": True},
                    "datasets": [{"image_directory": str((run / "train").resolve()),
                                  "control_directory": str((run / "train-sources").resolve()),
-                                 "control_resolution": [profile["resolution"]] * 2,
+                                 "control_resolution": [profile.get("control_resolution", profile["resolution"])] * 2,
                                  "cache_directory": str((run / "cache").resolve())}]}
     (run / "dataset.toml").write_text(toml.dumps(dataset), encoding="utf-8")
     return run

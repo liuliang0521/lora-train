@@ -1,6 +1,18 @@
 # 数据怎么放
 
-每个风格60张目标风格图：people20、animals15、scenes15、fantasy10；六种风格共360张。只有目标图即可做SDXL风格训练；Qwen Edit路线还要求同名原始照片。
+每个风格60张目标风格图：people20、animals15、scenes15、fantasy10；六种风格共360张。当前优先Qwen Edit路线，要求同名真实原始图片。备选SDXL只需要目标图。
+
+## 导入已生成的数据
+
+保留生成时的 `image/`、`train/<style>/`、`metadata/plan.json`，在仓库根目录执行：
+
+~~~powershell
+& .\.venv-qwen\Scripts\python.exe train.py import-generated
+# 数据在别的路径时：
+& .\.venv-qwen\Scripts\python.exe train.py import-generated --source-root "D:\素材\lora_train"
+~~~
+
+工具映射分类，同时复制真实源图到sources供Qwen使用。原PNG字节和原始.txt不修改；导入副本将旧 `iliang_cartoon` 等标记替换为当前训练触发词。所有输入、重复图和文件冲突检查通过后才写入，不覆盖已人工修订的datasets。重复导入会跳过一致文件；修订后直接validate/prepare，不再导入覆盖。候选描述不会因格式校验通过就被标成已人工确认。回执在runtime/import-generated.json。
 
 ~~~text
 datasets/
@@ -38,7 +50,7 @@ caption不能有TODO/占位符；不要把多个风格触发词混在同一份�
 
 ## 留出与校验
 
-标准60张中固定53训练、7验证（各类留出2/2/2/1）。按类别、图像内容哈希及种子42确定，验证图不会写入训练TOML。不同checkpoint使用同样验证源图、seed、参数。
+标准60张中固定53训练、7验证（各类留出2/2/2/1）。按类别、稳定样本编号及种子42确定，因此六种风格和两种后端使用同一批原图编号留出。验证图不会写入训练TOML。不同checkpoint使用同样验证源图、seed、参数。数据指纹包含图片内容、编辑描述、目标/条件尺寸和源码版本；当前schema3更新编辑指令，避免复用旧文本缓存，留出编号不变。
 
 工具阻止像素重复，不会自动识别同人连拍、同原图多裁切或视觉质量问题。人工整理近重复，避免同主体近重复跨训练/验证。更改图像、caption、分辨率产生新的数据指纹和缓存目录。
 
@@ -49,14 +61,14 @@ caption不能有TODO/占位符；不要把多个风格触发词混在同一份�
 每张目标图必须有sources/<category>/<同名>.png/jpg：
 1. 是风格转换前原图，人物数量、姿态和场景对应目标。
 2. 构图需对应；工具拒绝明显宽高比错位，但无法自动判断语义配对质量。
-3. caption写目标内容；prepare加入编辑指令。源图产生视觉条件，目标风格图产生损失。
+3. caption写目标内容；prepare加入风格触发词、画风描述及保留原场景的编辑指令。源图产生视觉条件，目标风格图产生损失。原图和目标目录不能反过来。
 4. 不能拿完全相同图作为输入与目标，这只会教重建，工具会拒绝。
 5. 两张不相关图片改成同名也不是合格配对。
 
 当前只有成品图就先走SDXL。不要用调黄滤镜、黑图或目标本身伪造编辑输入。Qwen图像生成LoRA和Edit配对LoRA任务不同，不承诺互换效果。
 
 ~~~powershell
-.\.venv-sdxl\Scripts\python.exe train.py validate --style cartoon
-.\.venv-sdxl\Scripts\python.exe train.py prepare --style cartoon
+.\.venv-sdxl\Scripts\python.exe train.py validate --backend sdxl --style cartoon
+.\.venv-sdxl\Scripts\python.exe train.py prepare --backend sdxl --style cartoon
 .\.venv-qwen\Scripts\python.exe train.py validate --backend qwen --style cartoon
 ~~~

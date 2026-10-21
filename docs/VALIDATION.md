@@ -1,5 +1,7 @@
 # 本轮验证记录（2026-10-20）
 
+此文件是此前RTX训练机的历史记录，不代表当前核显开发机的环境。2026-10-21的数据导入、脚本迭代与验证边界见[LOCAL_VALIDATION.md](LOCAL_VALIDATION.md)，台式机操作步骤见[WINDOWS_DESKTOP.md](WINDOWS_DESKTOP.md)。下文“数据未就绪”是历史状态。
+
 ## 本机实际完成
 
 - GPU：NVIDIA GeForce RTX4060Ti，16GB；nvidia-smi驱动610.88。

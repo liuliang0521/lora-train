@@ -15,10 +15,12 @@ def call(args, cwd=ROOT):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--backend", choices=["sdxl", "qwen"], default="sdxl")
+    parser.add_argument("--backend", choices=["sdxl", "qwen"], default="qwen")
     options = parser.parse_args()
     if sys.prefix == sys.base_prefix:
         raise SystemExit("Run inside the project's dedicated virtual environment")
+    if Path(sys.prefix).resolve() != (ROOT / (".venv-" + options.backend)).resolve():
+        raise SystemExit("Use this project's .venv-" + options.backend + "; refusing to modify another environment")
     if not (3, 10) <= sys.version_info[:2] <= (3, 12):
         raise SystemExit("Python 3.10-3.12 required")
     backend = json.loads((ROOT / "config/backends.json").read_text())[options.backend]
@@ -35,7 +37,7 @@ def main():
         call(safe + ["checkout", "--detach", backend["revision"]])
     pip = [sys.executable, "-m", "pip"]
     call(pip + ["install", "--upgrade", "pip", "setuptools", "wheel"])
-    call(pip + ["install", "torch==2.9.1", "torchvision==0.24.1",
+    call(pip + ["install", "torch==2.9.1+cu128", "torchvision==0.24.1+cu128",
                 "--index-url", "https://download.pytorch.org/whl/cu128"])
     constraints = str(ROOT / ("config/windows-sdxl.lock.txt" if options.backend == 'sdxl' and os.name == 'nt'
                               else "config/constraints.txt"))
@@ -44,6 +46,7 @@ def main():
         call(pip + ["install", "-c", constraints, "-r", "requirements.txt"], cwd=target)
     else:
         call(pip + ["install", "-c", constraints, "-e", str(target)])
+        call(pip + ["install", "-c", constraints, "-r", str(ROOT / "requirements-qwen.txt")])
     call(pip + ["check"])
     runtime = ROOT / "runtime"
     runtime.mkdir(exist_ok=True)

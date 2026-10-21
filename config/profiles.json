@@ -11,6 +11,11 @@
   },
   "qwen": {
     "resolution": 512,
+    "control_resolution": 512,
+    "pilot_steps": 100,
+    "block_swap_h2d_only": true,
+    "block_swap_ring_size": 1,
+    "gradient_checkpointing_cpu_offload": true,
     "batch_size": 1,
     "gradient_accumulation_steps": 4,
     "optimizer": "adamw",
