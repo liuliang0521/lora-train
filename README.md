@@ -65,6 +65,20 @@ powershell -ExecutionPolicy Bypass -File scripts/train-style.ps1 -Style cartoon 
 
 ## 输出与导出
 
+训练完成后，在训练机双击 `scripts/start-lora-test.cmd`，或执行：
+
+~~~powershell
+powershell -ExecutionPolicy Bypass -File scripts/test-loras.ps1
+# 比较一个风格的检查点和强度，跑完7张留出图并加入不加载LoRA的对照
+powershell -ExecutionPolicy Bypass -File scripts/test-loras.ps1 -Style cartoon -Checkpoints "600,800,1000" -Strengths "0.6,0.85,1.0" -Images 7 -Baseline
+# 只检查输入与测试计划，不启动GPU
+powershell -ExecutionPolicy Bypass -File scripts/test-loras.ps1 -DryRun
+~~~
+
+默认六风格各3张留出原图、最终权重、512尺寸、20步、CFG4、seed42，顺序生成18张。脚本自动连接或启动同级ComfyUI（默认8188），安装本地严格LoRA加载节点，校验权重及实际层匹配，不依赖Jetson节点、不加载Lightning。首次向已经运行的ComfyUI安装节点后需重启ComfyUI，再执行原命令。结果在 `runs/evaluation/<测试指纹>/index.html`，包含原图、目标参考与实际结果；每张图旁JSON记录checkpoint/input哈希、参数、API工作流与执行信息。相同命令跳过已保存结果，超时后重跑会继续等待原任务，不重复提交。ComfyUI进程保留供继续测试；启动日志在 `runtime/lora-test-comfy.log`。
+
+`-Images 7`使用完整留出集；`-Size 1024`测试部署尺寸；`-Url http://127.0.0.1:8189`连接其他本机端口。高级参数 `--comfy-dir`、`--comfy-python`、`--fingerprint` 可通过 `scripts/test_loras.py` 指定。多个数据指纹时必须明确选择。脚本拒绝与训练并行，也拒绝向有活动任务的ComfyUI追加测试。网页用于人工挑选最佳模型，完成出图不自动代表质量通过。
+
 权重位于 runs/qwen/<style>/<数据指纹>/output/*.safetensors。日志、资源采样、训练/验证划分、缓存、完整命令和环境快照在同一指纹目录。smoke/和pilot/均不允许导出上线。
 
 用固定留出输入选择最佳checkpoint后，显式导出（路径用实际值）：
